@@ -1,3 +1,68 @@
+# 22.07 (UNRELEASED)
+
+Compare checkpoint: https://github.com/helix-editor/helix/compare/21d12e1487f98b5dea93eba7bdc53d303932f990...master
+
+---
+
+Breaking changes:
+
+Features:
+
+Commands:
+
+Usability improvements and fixes:
+
+- Fix tree-sitter parser builds on illumos (#2602)
+- Remove empty stratch buffer from jumplists when removing (5ed6223)
+- Fix panic on undo after `shell_append_output` (#2625)
+- Sort LSP edits by start range (3d91c99)
+- Be more defensive about LSP URI conversions (6de6a3e, 378f438)
+- Ignore SendErrors when grammar builds fail (#2641)
+- Append `set_line_ending` to document history (#2649)
+- Use last prompt entry when empty (b14c258)
+- Do not add extra line breaks in markdown lists (#2689)
+- Disable dialyzer by default for ElixirLS (#2710)
+- Refactor textobject node capture (#2741)
+- Prevent re-selecting the same range with `expand_selection` (#2760)
+- Introduce `keyword.storage` highlight scope (#2731)
+- Handle symlinks more consistently (#2718)
+- Improve markdown list rendering (#2687)
+- Update auto-pairs and idle-timout settings when the config is reloaded (#2736)
+
+Themes:
+
+- Update `tokyonight` and `tokyonight_storm` themes (#2606)
+- Update `solarized_light` themes (#2626)
+- Fix `catpuccin` `ui.popup` theme (#2644)
+- Fix spelling of `catppuccin` theme (#2713)
+
+LSP:
+
+- V (#2526)
+- Prisma (#2703)
+- Clojure (#2780)
+
+New languages:
+
+- V (#2526)
+- EDoc (#2640)
+- JSDoc (#2650)
+- OpenSCAD (#2680)
+- Prisma (#2703)
+- Clojure (#2780)
+
+Updated languages and queries:
+
+- Nix (#2472)
+- Elixir (#2619)
+- CPON (#2643)
+- Textobjects queries for Erlang, Elixir, Gleam (#2661)
+- Capture rust closures as function textobjects (4a27e2d)
+
+Packaging:
+
+- Add `rust-analyzer` to nix flake devShell (#2739)
+
 # 22.05 (2022-05-28)
 
 An even bigger shout out than usual to all the contributors - we had a whopping
