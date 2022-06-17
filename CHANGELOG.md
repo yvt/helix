@@ -6,9 +6,13 @@ Compare checkpoint: https://github.com/helix-editor/helix/compare/21d12e1487f98b
 
 Breaking changes:
 
+- Special keymap names for `<`, `>`, `+`, `;` and `%` have been replaced with those literal characters (#2677)
+
 Features:
 
 Commands:
+
+- `:insert-output` and `:append-output` which insert/append output from a shell command (#2589)
 
 Usability improvements and fixes:
 
@@ -28,12 +32,18 @@ Usability improvements and fixes:
 - Handle symlinks more consistently (#2718)
 - Improve markdown list rendering (#2687)
 - Update auto-pairs and idle-timout settings when the config is reloaded (#2736)
+- Fix panic on closing last buffer (#2658)
+- Prevent modifying jumplist until jumping to a reference (#2670)
+- Ensure `:quit` and `:quit!` take no arguments (#2654)
+- Fix crash due to cycles when replaying macros (#2647)
+- Pass LSP FormattingOptions (#2635)
 
 Themes:
 
 - Update `tokyonight` and `tokyonight_storm` themes (#2606)
 - Update `solarized_light` themes (#2626)
 - Fix `catpuccin` `ui.popup` theme (#2644)
+- Update selection style of `night_owl` (#2668)
 - Fix spelling of `catppuccin` theme (#2713)
 
 LSP:
