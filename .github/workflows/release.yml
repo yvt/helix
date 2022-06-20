@@ -4,6 +4,8 @@ on:
     tags:
     - '[0-9]+.[0-9]+'
     - '[0-9]+.[0-9]+.[0-9]+'
+    branches:
+    - patch/ci-aarch64
 
 jobs:
   fetch-grammars:
@@ -250,9 +252,17 @@ jobs:
 
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
+        if: github.ref == 'ref/heads/master'
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/*
           file_glob: true
           tag: ${{ steps.tagname.outputs.val }}
           overwrite: true
+      
+      - name: Upload binaries as artifact
+        uses: actions/upload-artifact@v2
+        if: github.ref != 'ref/heads/master'
+        with:
+          name: release
+          path: dist/*
