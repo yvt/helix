@@ -305,13 +305,16 @@ fn build_tree_sitter_library(src_path: &Path, grammar: GrammarConfiguration) -> 
 
     println!("Building grammar '{}'", grammar.grammar_id);
 
+    let target = std::env::var("TARGET");
+    let target = target.as_deref().unwrap_or(BUILD_TARGET);
+
     let mut config = cc::Build::new();
     config
         .cpp(true)
         .opt_level(3)
         .cargo_metadata(false)
         .host(BUILD_TARGET)
-        .target(BUILD_TARGET);
+        .target(target);
     let compiler = config.get_compiler();
     let mut command = Command::new(compiler.path());
     command.current_dir(src_path);
