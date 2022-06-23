@@ -61,6 +61,11 @@ jobs:
         #   rust: stable
         #   target: x86_64-apple-darwin
         #   cross: false
+        - build: aarch64-macos
+          os: macos-latest
+          rust: stable
+          target: aarch64-apple-darwin
+          cross: false
         # - build: x86_64-windows
         #   os: windows-2019
         #   rust: stable
@@ -100,8 +105,18 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
+      # x86_64 macOS runner cannot run AArch64 macOS binaries
+      - name: Run cargo build --tests
+        uses: actions-rs/cargo@v1
+        if: "matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'"
+        with:
+          use-cross: ${{ matrix.cross }}
+          command: build
+          args: --release --locked --target ${{ matrix.target }} --workspace --tests
+
       - name: Run cargo test
         uses: actions-rs/cargo@v1
+        if: "!(matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin')"
         with:
           use-cross: ${{ matrix.cross }}
           command: test
