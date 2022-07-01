@@ -162,6 +162,12 @@ impl EditorView {
             .clip_top(view.area.height.saturating_sub(1))
             .clip_bottom(1); // -1 from bottom to remove commandline
         self.render_statusline(editor, doc, view, statusline_area, surface, is_focused);
+
+        if !is_focused {
+            if let Some(shade) = editor.config().dim.unfocused_views {
+                surface.dim(area, shade);
+            }
+        }
     }
 
     pub fn render_rulers(

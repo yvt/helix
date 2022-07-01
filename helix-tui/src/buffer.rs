@@ -1,9 +1,8 @@
 use crate::text::{Span, Spans};
 use helix_core::unicode::width::UnicodeWidthStr;
+use helix_view::graphics::{Color, Modifier, Rect, Style};
 use std::cmp::min;
 use unicode_segmentation::UnicodeSegmentation;
-
-use helix_view::graphics::{Color, Modifier, Rect, Style};
 
 /// A buffer cell
 #[derive(Debug, Clone, PartialEq)]
@@ -582,6 +581,35 @@ impl Buffer {
             invalidated = std::cmp::max(affected_width, invalidated).saturating_sub(1);
         }
         updates
+    }
+
+    /// Apply shade to all cells in area.
+    ///
+    /// - `shade = 0`: set text modifier `DIM`
+    /// - `shade < 0`: darken rgb color
+    /// - `shade > 0`: lighten rgb color
+    pub fn dim(&mut self, area: Rect, shade: i8) {
+        let alpha = i32::from(shade).unsigned_abs() << 1;
+        let (src_factor, dst_factor) = (alpha, 256 - alpha);
+        let src = if shade > 0 { 255u32 } else { 0u32 } * src_factor;
+        let shaded = |dst_color: u8| ((u32::from(dst_color) * dst_factor + src) >> 8) as u8;
+
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                let cell = &mut self[(x, y)];
+
+                if shade == 0 {
+                    cell.modifier.insert(Modifier::DIM);
+                } else {
+                    if let Color::Rgb(r, g, b) = cell.fg {
+                        cell.fg = Color::Rgb(shaded(r), shaded(g), shaded(b))
+                    };
+                    if let Color::Rgb(r, g, b) = cell.bg {
+                        cell.bg = Color::Rgb(shaded(r), shaded(g), shaded(b))
+                    }
+                }
+            }
+        }
     }
 }
 
