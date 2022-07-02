@@ -286,6 +286,34 @@ pub enum Color {
     Indexed(u8),
 }
 
+impl Color {
+    /// Get the true color approximation of `self`. Returns `None` if we are
+    /// absolutely uncertain.
+    pub fn rgb(self) -> Option<(u8, u8, u8)> {
+        match self {
+            Color::Reset => None,
+            Color::Black => Some((0, 0, 0)),
+            Color::Red => Some((128, 0, 0)),
+            Color::Green => Some((0, 128, 0)),
+            Color::Yellow => Some((128, 128, 0)),
+            Color::Blue => Some((0, 0, 128)),
+            Color::Magenta => Some((128, 0, 128)),
+            Color::Cyan => Some((0, 128, 128)),
+            Color::Gray => Some((128, 128, 128)),
+            Color::LightRed => Some((255, 0, 0)),
+            Color::LightGreen => Some((0, 255, 0)),
+            Color::LightYellow => Some((255, 255, 0)),
+            Color::LightBlue => Some((0, 0, 255)),
+            Color::LightMagenta => Some((255, 0, 255)),
+            Color::LightCyan => Some((0, 255, 255)),
+            Color::LightGray => Some((192, 192, 192)),
+            Color::White => Some((255, 255, 255)),
+            Color::Rgb(r, g, b) => Some((r, g, b)),
+            Color::Indexed(_) => None, // TODO
+        }
+    }
+}
+
 #[cfg(feature = "term")]
 impl From<Color> for crossterm::style::Color {
     fn from(color: Color) -> Self {

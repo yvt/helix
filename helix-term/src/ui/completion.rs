@@ -403,7 +403,7 @@ impl Component for Completion {
 
             // clear area
             let background = cx.editor.theme.get("ui.popup");
-            surface.clear_with(area, background);
+            surface.acrylic(area, background);
             markdown_doc.render(area, surface, cx);
         }
     }

@@ -377,7 +377,7 @@ impl Prompt {
                 .map(|selection| selection / items * items)
                 .unwrap_or_default();
 
-            surface.clear_with(area, background);
+            surface.acrylic(area, background);
 
             let mut row = 0;
             let mut col = 0;
@@ -423,7 +423,7 @@ impl Prompt {
             ));
 
             let background = theme.get("ui.help");
-            surface.clear_with(area, background);
+            surface.acrylic(area, background);
 
             let block = Block::default()
                 // .title(self.title.as_str())

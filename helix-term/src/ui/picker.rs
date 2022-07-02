@@ -177,7 +177,7 @@ impl<T: 'static> Component for FilePicker<T> {
         // clear area
         let background = cx.editor.theme.get("ui.background");
         let text = cx.editor.theme.get("ui.text");
-        surface.clear_with(area, background);
+        surface.acrylic(area, background);
 
         let picker_width = if render_preview {
             area.width / 2
@@ -557,7 +557,7 @@ impl<T: 'static> Component for Picker<T> {
         // -- Render the frame:
         // clear area
         let background = cx.editor.theme.get("ui.background");
-        surface.clear_with(area, background);
+        surface.acrylic(area, background);
 
         // don't like this but the lifetime sucks
         let block = Block::default().borders(Borders::ALL);

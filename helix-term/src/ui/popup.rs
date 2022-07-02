@@ -184,7 +184,7 @@ impl<T: Component> Component for Popup<T> {
 
         // clear area
         let background = cx.editor.theme.get("ui.popup");
-        surface.clear_with(area, background);
+        surface.acrylic(area, background);
 
         let inner = area.inner(&self.margin);
         self.contents.render(inner, surface, cx);

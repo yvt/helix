@@ -20,7 +20,7 @@ impl Component for Info {
             width,
             height,
         ));
-        surface.clear_with(area, popup_style);
+        surface.acrylic(area, popup_style);
 
         let block = Block::default()
             .title(self.title.as_str())

@@ -611,6 +611,153 @@ impl Buffer {
             }
         }
     }
+
+    pub fn acrylic(&mut self, area: Rect, style: Style) {
+        let src = style.bg.and_then(|c| c.rgb()).unwrap_or((32, 32, 32));
+        let alpha = 160;
+        let (src_factor, dst_factor) = (alpha, 256 - alpha);
+        let shaded = |dst_color: u8, src: u8| {
+            ((u32::from(dst_color) * dst_factor + u32::from(src) * src_factor) >> 8) as u8
+        };
+
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                let cell = &mut self[(x, y)];
+
+                let (r, g, b) = cell.fg.rgb().unwrap_or((192, 192, 192));
+                cell.fg = Color::Rgb(shaded(r, src.0), shaded(g, src.1), shaded(b, src.2));
+
+                let (r, g, b) = cell.bg.rgb().unwrap_or((0, 0, 0));
+                cell.bg = Color::Rgb(shaded(r, src.0), shaded(g, src.1), shaded(b, src.2));
+            }
+        }
+
+        self.blur(area);
+    }
+
+    /// Apply a blur effect to the specified area.
+    pub fn blur(&mut self, area: Rect) {
+        use ndarray::{Array3, ArrayView1, Axis};
+        let dim = [area.height, area.width];
+        let cell_dim = [3, 2];
+        let image_dim = [dim[0] as usize * cell_dim[0], dim[1] as usize * cell_dim[1]];
+        let mut input_linear = Array3::zeros((3, image_dim[0], image_dim[1]));
+        let mut tmp_linear = Array3::zeros((3, image_dim[0], image_dim[1]));
+        ndarray::Zip::indexed(input_linear.exact_chunks_mut((3, cell_dim[0], cell_dim[1])))
+            .for_each(|(_, y, x), mut out_input_linear| {
+                let map_color = |c: Color, def: u8| {
+                    let (r, g, b) = c.rgb().unwrap_or((def, def, def));
+                    [r, g, b].map(srgb::gamma::expand_u8)
+                };
+                let cell = &self[(x as u16 + area.left(), y as u16 + area.top())];
+                let mut bg = map_color(cell.bg, 0);
+                let fg = map_color(cell.fg, 192);
+                // TODO: Improve glyph density calculation
+                let density = cell
+                    .symbol
+                    .chars()
+                    .next()
+                    .filter(|c| !c.is_whitespace())
+                    .map_or(0.0f32, |_| 0.4);
+                // FIXME: Use `array::zip` when stable
+                for (bg, &fg) in bg.iter_mut().zip(fg.iter()) {
+                    *bg += (fg - *bg) * density;
+                }
+                // TODO: Vary brightness within each cell
+                for mut out_input_linear in out_input_linear.lanes_mut(Axis(0)) {
+                    out_input_linear.assign(&ArrayView1::from(&bg));
+                }
+            });
+
+        // Apply vertical blur (`input_linear` -> `tmp_linear`)
+        convolve_2d_1d_vert(
+            input_linear.as_slice().unwrap(),
+            image_dim[0],
+            image_dim[1],
+            &gauss1d_kernel(15),
+            tmp_linear.as_slice_mut().unwrap(),
+        );
+
+        // Transpose the memory layout (`tmp_linear` -> `input_linear`)
+        let image_area = image_dim[0] * image_dim[1];
+        for (input_linear, tmp_linear) in input_linear
+            .as_slice_mut()
+            .unwrap()
+            .chunks_exact_mut(image_area)
+            .zip(tmp_linear.as_slice().unwrap().chunks_exact(image_area))
+        {
+            transpose::transpose(tmp_linear, input_linear, image_dim[1], image_dim[0]);
+        }
+
+        // Apply horizontal blur (`input_linear` -> `tmp_linear`)
+        convolve_2d_1d_vert(
+            input_linear.as_slice().unwrap(),
+            image_dim[1],
+            image_dim[0],
+            &gauss1d_kernel(20),
+            tmp_linear.as_slice_mut().unwrap(),
+        );
+
+        // Transpose the memory layout (`tmp_linear` -> `input_linear`)
+        let image_area = image_dim[0] * image_dim[1];
+        for (input_linear, tmp_linear) in input_linear
+            .as_slice_mut()
+            .unwrap()
+            .chunks_exact_mut(image_area)
+            .zip(tmp_linear.as_slice().unwrap().chunks_exact(image_area))
+        {
+            transpose::transpose(tmp_linear, input_linear, image_dim[0], image_dim[1]);
+        }
+
+        // Convert the color image to text
+        let mut qopts = img2ctext::DEFAULT_QUANTIZE_OPTS;
+        qopts.cell_dim = cell_dim;
+        let qimg = img2ctext::quantize(input_linear.view(), &qopts).unwrap();
+        assert_eq!(qimg.image_dim(), dim.map(|x| x as usize));
+        assert_eq!(qimg.cell_dim(), cell_dim);
+
+        // Write the result
+        struct WriteCellImpl<'a> {
+            buffer: &'a mut Buffer,
+            left: u16,
+            x: u16,
+            y: u16,
+        }
+
+        impl img2ctext::WriteCell for WriteCellImpl<'_> {
+            type Error = ();
+
+            #[inline]
+            fn write_str_cell(
+                &mut self,
+                s: &str,
+                palette: [rgb::RGB8; 2],
+            ) -> Result<(), Self::Error> {
+                let palette = palette.map(|c| Color::Rgb(c.r, c.g, c.b));
+                let cell = &mut self.buffer[(self.x, self.y)];
+                cell.symbol = s.to_owned();
+                cell.bg = palette[0];
+                cell.fg = palette[1];
+                self.x = self.x.wrapping_add(1);
+                Ok(())
+            }
+
+            #[inline]
+            fn write_line_terminator(&mut self) -> Result<(), Self::Error> {
+                self.x = self.left;
+                self.y = self.y.wrapping_add(1);
+                Ok(())
+            }
+        }
+
+        qimg.write_2x3_to(&mut WriteCellImpl {
+            buffer: self,
+            left: area.left(),
+            x: area.left(),
+            y: area.top(),
+        })
+        .unwrap();
+    }
 }
 
 impl std::ops::Index<(u16, u16)> for Buffer {
@@ -626,6 +773,152 @@ impl std::ops::IndexMut<(u16, u16)> for Buffer {
     fn index_mut(&mut self, (x, y): (u16, u16)) -> &mut Self::Output {
         let i = self.index_of(x, y);
         &mut self.content[i]
+    }
+}
+
+/// Evaluate the discrete probablistic distribution function for a Gaussian
+/// kernel.
+fn gauss1d_kernel(radius: usize) -> Vec<f32> {
+    let radius: i16 = radius.try_into().unwrap();
+    let s = -(3.0 / radius as f32).powi(2);
+    let mut out: Vec<f32> = (-radius..=radius)
+        .map(|i| ((i as f32).powi(2) * s).exp2())
+        .collect();
+    let sum: f32 = out.iter().sum();
+    out.iter_mut().for_each(|x| *x *= 1.0 / sum);
+    out
+}
+
+/// Convolve an array of size `[.., m_h, m_w]` by a normalized kernel of size
+/// `[1, k.len(), 1]`. The kernel is assumed center-aligned.
+fn convolve_2d_1d_vert(m: &[f32], m_h: usize, m_w: usize, k: &[f32], out: &mut [f32]) {
+    use ndarray::{ArrayView1, ArrayView2, ArrayViewMut1, ArrayViewMut2, Axis};
+    const MAX_STRIPE_SIZE: usize = 8; // operate on 256-bit vectors
+    let m_area = m_w.checked_mul(m_h).expect("overflow");
+    for (m, out) in m.chunks_exact(m_area).zip(out.chunks_exact_mut(m_area)) {
+        let m = ArrayView1::from(m).into_shape((m_h, m_w)).unwrap();
+        let mut out = ArrayViewMut1::from(out).into_shape((m_h, m_w)).unwrap();
+
+        fn process_strip<const STRIPE_SIZE: usize>(
+            m: ArrayView2<'_, f32>,
+            mut out: ArrayViewMut2<'_, f32>,
+            k: &[f32],
+        ) {
+            let k_len = k.len();
+            let radius = k_len / 2;
+
+            let mut buf = [0f32; STRIPE_SIZE];
+            let stripe_size = m.dim().1;
+            assert_eq!(stripe_size, out.dim().1);
+            assert_eq!(stripe_size, STRIPE_SIZE);
+
+            // Assert contiguity of each row
+            assert_eq!(m.stride_of(Axis(1)), 1);
+            assert_eq!(out.stride_of(Axis(1)), 1);
+
+            let len = m.dim().0;
+            assert_eq!(len, out.dim().0);
+
+            let mut out_iter = out.rows_mut().into_iter().enumerate();
+
+            if len < radius * 2 {
+                for (out_i, mut out) in out_iter {
+                    let mut weight = 0.0;
+                    buf[..stripe_size].fill(0.0);
+
+                    for (i, &k) in k.iter().enumerate() {
+                        let m_i = (out_i + i).wrapping_sub(radius);
+                        if m_i < len {
+                            for (buf, &m) in buf.iter_mut().zip(m.row(m_i).iter()) {
+                                *buf += m * k;
+                            }
+                            weight += k;
+                        }
+                    }
+
+                    for (out, &buf) in out.iter_mut().zip(buf.iter()) {
+                        *out = buf * (1.0 / weight);
+                    }
+                }
+            } else {
+                let mut weight = k[radius..].iter().sum::<f32>();
+
+                let mut m_sampler = m.rows().into_iter();
+                for (added_k_i, (_out_i, mut out)) in (0..radius).rev().zip(out_iter.by_ref()) {
+                    // weight == k[added_k_i..].sum()
+                    buf[..stripe_size].fill(0.0);
+
+                    for (&k, m) in k[added_k_i + 1..].iter().zip(m_sampler.clone()) {
+                        for (buf, &m) in buf.iter_mut().zip(m.iter()) {
+                            *buf += m * k;
+                        }
+                    }
+
+                    for (out, &buf) in out.iter_mut().zip(buf.iter()) {
+                        *out = buf * (1.0 / weight);
+                    }
+
+                    weight += k[added_k_i];
+                }
+
+                for (_out_i, mut out) in out_iter.by_ref().take(len - radius * 2) {
+                    // weight == k.sum() == 1.0
+                    buf[..stripe_size].fill(0.0);
+
+                    for (&k, m) in k.iter().zip(m_sampler.clone()) {
+                        for (buf, &m) in buf.iter_mut().zip(m.iter()) {
+                            *buf += m * k;
+                        }
+                    }
+
+                    for (out, &buf) in out.iter_mut().zip(buf.iter()) {
+                        *out = buf;
+                    }
+
+                    m_sampler.next();
+                }
+
+                for (removed_k_i, (_out_i, mut out)) in (radius..k_len).rev().zip(out_iter.by_ref())
+                {
+                    weight -= k[removed_k_i];
+
+                    // weight == k[..removed_k_i].sum()
+                    buf[..stripe_size].fill(0.0);
+
+                    for (&k, m) in k[..=removed_k_i].iter().zip(m_sampler.clone()) {
+                        for (buf, &m) in buf.iter_mut().zip(m.iter()) {
+                            *buf += m * k;
+                        }
+                    }
+
+                    for (out, &buf) in out.iter_mut().zip(buf.iter()) {
+                        *out = buf * (1.0 / weight);
+                    }
+
+                    m_sampler.next();
+                }
+
+                assert!(out_iter.next().is_none());
+            }
+        }
+
+        for (m, mut out) in m
+            .axis_chunks_iter(Axis(1), MAX_STRIPE_SIZE)
+            .zip(out.axis_chunks_iter_mut(Axis(1), MAX_STRIPE_SIZE))
+        {
+            if m.dim().1 == MAX_STRIPE_SIZE {
+                // vectorized
+                process_strip::<MAX_STRIPE_SIZE>(m, out, k);
+            } else {
+                for (m, out) in m
+                    .axis_chunks_iter(Axis(1), 1)
+                    .zip(out.axis_chunks_iter_mut(Axis(1), 1))
+                {
+                    // scalar tail
+                    process_strip::<1>(m, out, k);
+                }
+            }
+        }
     }
 }
 
