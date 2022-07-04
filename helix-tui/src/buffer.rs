@@ -632,7 +632,255 @@ impl Buffer {
             }
         }
 
+        self.shadow(
+            Rect {
+                x: area.x + 1,
+                y: area.y + 1,
+                ..area
+            },
+            area,
+        );
+
         self.blur(area);
+    }
+
+    /// Draw a fuzzy black rectangle.
+    pub fn shadow(&mut self, area: Rect, exclude_area: Rect) {
+        use ndarray::{Array3, ArrayView1, Axis};
+        use std::num::Wrapping;
+        let kernel_radius_by_cells = [6, 12];
+        let paint_area = [
+            area.top()
+                .saturating_sub(kernel_radius_by_cells[0] as u16)
+                .max(self.area.top()),
+            area.left()
+                .saturating_sub(kernel_radius_by_cells[1] as u16)
+                .max(self.area.left()),
+            area.bottom()
+                .saturating_add(kernel_radius_by_cells[0] as u16)
+                .min(self.area.bottom()),
+            area.right()
+                .saturating_add(kernel_radius_by_cells[1] as u16)
+                .min(self.area.right()),
+        ];
+        let paint_area = Rect::new(
+            paint_area[1],
+            paint_area[0],
+            paint_area[3] - paint_area[1],
+            paint_area[2] - paint_area[0],
+        );
+        let paint_dim = [paint_area.height, paint_area.width];
+
+        let cell_dim = [3, 2];
+        let image_dim = [
+            paint_dim[0] as usize * cell_dim[0],
+            paint_dim[1] as usize * cell_dim[1],
+        ];
+        let kernel_radius = [
+            kernel_radius_by_cells[0] * cell_dim[0],
+            kernel_radius_by_cells[1] * cell_dim[1],
+        ];
+
+        fn is_symbol_empty(symbol: &str) -> bool {
+            symbol
+                .chars()
+                .next()
+                .filter(|c| !c.is_whitespace())
+                .is_none()
+        }
+
+        let mut image = Array3::zeros((3, image_dim[0], image_dim[1]));
+        ndarray::Zip::indexed(image.exact_chunks_mut((3, cell_dim[0], cell_dim[1]))).for_each(
+            |(_, y, x), mut out_cell| {
+                let map_color = |c: Color, def: u8| {
+                    let (r, g, b) = c.rgb().unwrap_or((def, def, def));
+                    [r, g, b].map(srgb::gamma::expand_u8)
+                };
+                let cell = &self[(x as u16 + paint_area.left(), y as u16 + paint_area.top())];
+                let bg = map_color(cell.bg, 0);
+                let mut fg = map_color(cell.fg, 192);
+
+                if is_symbol_empty(&cell.symbol) {
+                    // This cell is empty; img2ctext will create multiple shades
+                    // in this cell
+                    fg = bg;
+                }
+
+                for (i, mut out_input_linear) in out_cell.lanes_mut(Axis(0)).into_iter().enumerate()
+                {
+                    out_input_linear.assign(&ArrayView1::from([&bg, &fg][i % 2]));
+                }
+            },
+        );
+
+        // Draw shadow
+        // kernel_cum_X[i] == kernel_X[0..i].sum() (where kernel_X is a Gaussian
+        // distribution centered around kernel_radius[X])
+        let kernel_cum_y = gauss1d_kernel_cum(kernel_radius[0]);
+        let kernel_cum_x = gauss1d_kernel_cum(kernel_radius[1]);
+        let kernel_sample_start = [
+            (paint_area.top() as usize + kernel_radius_by_cells[0] - area.top() as usize)
+                * cell_dim[0],
+            (paint_area.left() as usize + kernel_radius_by_cells[1] - area.left() as usize)
+                * cell_dim[1],
+        ];
+        let shadow_strength = 0.3;
+        for mut out_plane in image.axis_iter_mut(Axis(0)) {
+            let out_plane = out_plane.as_slice_mut().unwrap();
+            for (out_line, kernel_sample_y) in out_plane
+                .chunks_exact_mut(image_dim[1])
+                .zip(kernel_sample_start[0]..)
+            {
+                let factor_y = kernel_cum_y.get(kernel_sample_y).copied().unwrap_or(1.0)
+                    - kernel_cum_y
+                        .get(kernel_sample_y.wrapping_sub(area.height as usize * cell_dim[0]))
+                        .copied()
+                        .unwrap_or(0.0);
+
+                let mut kernel_sample_x1 = Wrapping(kernel_sample_start[1]);
+                let mut kernel_sample_x2 =
+                    kernel_sample_x1 - Wrapping(area.width as usize * cell_dim[1]);
+                let mut out_line_iter = out_line.iter_mut();
+
+                while let Some((factor_x, out_pixel)) = kernel_cum_x
+                    .get(kernel_sample_x1.0)
+                    .filter(|_| kernel_cum_x.get(kernel_sample_x2.0).is_none())
+                    // TODO: Use `Option::zip_with` when stable
+                    .and_then(|kernel_sample1| Some((kernel_sample1, out_line_iter.next()?)))
+                {
+                    *out_pixel *= 1.0 - shadow_strength * factor_y * factor_x;
+                    kernel_sample_x1 += 1;
+                    kernel_sample_x2 += 1;
+                }
+
+                if kernel_cum_x.get(kernel_sample_x1.0).is_some() {
+                    while let Some((factor_x, out_pixel)) = kernel_cum_x
+                        .get(kernel_sample_x1.0)
+                        .zip(kernel_cum_x.get(kernel_sample_x2.0))
+                        // TODO: Use `Option::zip_with` when stable
+                        .and_then(|(kernel_sample1, kernel_sample2)| {
+                            Some((kernel_sample1 - kernel_sample2, out_line_iter.next()?))
+                        })
+                    {
+                        *out_pixel *= 1.0 - shadow_strength * factor_y * factor_x;
+                        kernel_sample_x1 += 1;
+                        kernel_sample_x2 += 1;
+                    }
+                } else {
+                    while let Some(Some(out_pixel)) =
+                        (kernel_cum_x.get(kernel_sample_x1.0).is_none()
+                            && kernel_cum_x.get(kernel_sample_x2.0).is_none())
+                        .then(|| out_line_iter.next())
+                    {
+                        *out_pixel *= 1.0 - shadow_strength * factor_y;
+                        kernel_sample_x1 += 1;
+                        kernel_sample_x2 += 1;
+                    }
+                }
+
+                while let Some((factor_x, out_pixel)) = kernel_cum_x
+                    .get(kernel_sample_x2.0)
+                    // TODO: Use `Option::zip_with` when stable
+                    .and_then(|kernel_sample2| Some((1.0 - kernel_sample2, out_line_iter.next()?)))
+                {
+                    *out_pixel *= 1.0 - shadow_strength * factor_y * factor_x;
+                    kernel_sample_x1 += 1;
+                    kernel_sample_x2 += 1;
+                }
+
+                // All lines should have been processed
+                assert!(out_line_iter.next().is_none());
+            }
+        }
+
+        // Convert the color image to text
+        let mut qopts = img2ctext::DEFAULT_QUANTIZE_OPTS;
+        qopts.cell_dim = cell_dim;
+        //qopts.dither_strength = 0.0;
+        let qimg = img2ctext::quantize(image.view(), &qopts).unwrap();
+        assert_eq!(qimg.image_dim(), paint_dim.map(|x| x as usize));
+        assert_eq!(qimg.cell_dim(), cell_dim);
+
+        fn rect_contains(rect: &Rect, (x, y): (u16, u16)) -> bool {
+            x.wrapping_sub(rect.x) < rect.width && y.wrapping_sub(rect.y) < rect.height
+        }
+
+        // Update non-empty cells (We mustn't replace visible characters
+        // with block characters generated by img2ctext)
+        ndarray::Zip::indexed(image.exact_chunks_mut((3, cell_dim[0], cell_dim[1]))).for_each(
+            |(_, y, x), colors| {
+                let point = (x as u16 + paint_area.left(), y as u16 + paint_area.top());
+                if rect_contains(&exclude_area, point) {
+                    return;
+                }
+
+                let cell = &mut self[point];
+                if is_symbol_empty(&cell.symbol) {
+                    return;
+                }
+
+                let [bg, fg] = [
+                    [colors[(0, 0, 0)], colors[(1, 0, 0)], colors[(2, 0, 0)]],
+                    [colors[(0, 0, 1)], colors[(1, 0, 1)], colors[(2, 0, 1)]],
+                ]
+                .map(|color| {
+                    let [r, g, b] = color.map(srgb::gamma::compress_u8);
+                    Color::Rgb(r, g, b)
+                });
+
+                cell.bg = bg;
+                cell.fg = fg;
+            },
+        );
+
+        // Update empty cells with img2ctext-generated shades
+        struct WriteCellImpl<'a> {
+            buffer: &'a mut Buffer,
+            left: u16,
+            x: u16,
+            y: u16,
+            exclude_area: Rect,
+        }
+
+        impl img2ctext::WriteCell for WriteCellImpl<'_> {
+            type Error = ();
+
+            #[inline]
+            fn write_str_cell(
+                &mut self,
+                s: &str,
+                palette: [rgb::RGB8; 2],
+            ) -> Result<(), Self::Error> {
+                let palette = palette.map(|c| Color::Rgb(c.r, c.g, c.b));
+
+                let point = (self.x, self.y);
+                let cell = &mut self.buffer[point];
+                if !rect_contains(&self.exclude_area, point) && is_symbol_empty(&cell.symbol) {
+                    cell.symbol = s.to_owned();
+                    cell.bg = palette[0];
+                    cell.fg = palette[1];
+                }
+                self.x = self.x.wrapping_add(1);
+
+                Ok(())
+            }
+
+            #[inline]
+            fn write_line_terminator(&mut self) -> Result<(), Self::Error> {
+                self.x = self.left;
+                self.y = self.y.wrapping_add(1);
+                Ok(())
+            }
+        }
+
+        qimg.write_2x3_to(&mut WriteCellImpl {
+            buffer: self,
+            left: paint_area.left(),
+            x: paint_area.left(),
+            y: paint_area.top(),
+            exclude_area,
+        })
+        .unwrap();
     }
 
     /// Apply a blur effect to the specified area.
@@ -787,6 +1035,18 @@ fn gauss1d_kernel(radius: usize) -> Vec<f32> {
     let sum: f32 = out.iter().sum();
     out.iter_mut().for_each(|x| *x *= 1.0 / sum);
     out
+}
+
+/// Evaluate the cumulative discrete probablistic distribution function for a
+/// Gaussian kernel. Returns a `Vec` of length `radius * 2 + 1` that starts
+/// with `0.0` and ends with `1.0`.
+fn gauss1d_kernel_cum(radius: usize) -> Vec<f32> {
+    let mut kernel = gauss1d_kernel(radius);
+    kernel
+        .iter_mut()
+        .fold(0.0, |acc, x| acc + std::mem::replace(x, acc)); // ... ≈ 1.0
+    kernel.push(1.0);
+    kernel
 }
 
 /// Convolve an array of size `[.., m_h, m_w]` by a normalized kernel of size
