@@ -124,22 +124,13 @@ jobs:
         if: matrix.build == 'x86_64-linux' || endsWith(matrix.build, 'macos')
         run: strip "target/${{ matrix.target }}/release/hx"
 
-      - name: Strip release binary (arm)
-        if: matrix.build == 'aarch64-linux'
+      - name: Strip release binary (arm and riscv64)
+        if: matrix.build == 'aarch64-linux' || matrix.build == 'riscv64-linux'
         run: |
           docker run --rm -v \
             "$PWD/target:/target:Z" \
             rustembedded/cross:${{ matrix.target }} \
-            aarch64-linux-gnu-strip \
-            /target/${{ matrix.target }}/release/hx
-
-      - name: Strip release binary (riscv64)
-        if: matrix.build == 'riscv64-linux'
-        run: |
-          docker run --rm -v \
-            "$PWD/target:/target:Z" \
-            rustembedded/cross:${{ matrix.target }} \
-            riscv64-linux-gnu-strip \
+            ${{ matrix.target }}-gnu-strip \
             /target/${{ matrix.target }}/release/hx
 
       - name: Build AppImage
