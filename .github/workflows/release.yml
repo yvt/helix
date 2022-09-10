@@ -116,6 +116,13 @@ jobs:
           command: test
           args: --release --locked --target ${{ matrix.target }} --workspace
 
+      - name: Set profile.release.strip = true
+        run: |
+          cat >> .cargo/config.toml <<EOF
+          [profile.release]
+          strip = true
+          EOF
+
       - name: Build release binary
         uses: actions-rs/cargo@v1
         with:
