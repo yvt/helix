@@ -85,7 +85,6 @@ jobs:
           rust: stable
           target: x86_64-pc-windows-msvc
           cross: false
-        # 23.03: build issues
         - build: aarch64-macos
           os: macos-latest
           rust: stable
